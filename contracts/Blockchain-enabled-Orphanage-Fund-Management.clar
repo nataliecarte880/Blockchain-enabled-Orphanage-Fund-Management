@@ -9,10 +9,13 @@
 (define-constant ERR-ALREADY-VOTED (err u107))
 (define-constant ERR-VOTING-ENDED (err u108))
 (define-constant ERR-PROPOSAL-NOT-PASSED (err u109))
+(define-constant ERR-BADGE-NOT-EARNED (err u110))
+(define-constant ERR-BADGE-ALREADY-CLAIMED (err u111))
 
 (define-data-var next-orphanage-id uint u1)
 (define-data-var next-proposal-id uint u1)
 (define-data-var total-donations uint u0)
+(define-data-var next-badge-id uint u1)
 
 (define-map orphanages
     uint
@@ -74,6 +77,40 @@
     bool
 )
 
+;; Donor Recognition System Maps
+(define-map donor-badges
+    {
+        donor: principal,
+        badge-type: (string-ascii 32),
+    }
+    {
+        badge-id: uint,
+        earned-at: uint,
+        claimed: bool,
+        badge-value: uint,
+    }
+)
+
+(define-map badge-definitions
+    (string-ascii 32)
+    {
+        min-donation: uint,
+        badge-name: (string-ascii 64),
+        description: (string-ascii 128),
+        reward-multiplier: uint,
+    }
+)
+
+(define-map donor-recognition-stats
+    principal
+    {
+        total-badges: uint,
+        highest-badge-tier: uint,
+        recognition-score: uint,
+        vip-status: bool,
+    }
+)
+
 (define-read-only (get-orphanage (orphanage-id uint))
     (map-get? orphanages orphanage-id)
 )
@@ -116,6 +153,45 @@
 
 (define-read-only (is-authorized-manager (manager principal))
     (default-to false (map-get? authorized-managers manager))
+)
+
+;; Donor Recognition System Read-Only Functions
+(define-read-only (get-donor-badge
+        (donor principal)
+        (badge-type (string-ascii 32))
+    )
+    (map-get? donor-badges {
+        donor: donor,
+        badge-type: badge-type,
+    })
+)
+
+(define-read-only (get-badge-definition (badge-type (string-ascii 32)))
+    (map-get? badge-definitions badge-type)
+)
+
+(define-read-only (get-donor-recognition-stats (donor principal))
+    (map-get? donor-recognition-stats donor)
+)
+
+(define-read-only (is-vip-donor (donor principal))
+    (match (map-get? donor-recognition-stats donor)
+        stats (get vip-status stats)
+        false
+    )
+)
+
+(define-read-only (calculate-recognition-score (donor principal))
+    (let (
+            (total-donated (get-donor-total donor))
+            (stats (map-get? donor-recognition-stats donor))
+        )
+        (match stats
+            recognition-data (+ (get recognition-score recognition-data) 
+                               (* total-donated u10))
+            (* total-donated u10)
+        )
+    )
 )
 
 (define-public (register-orphanage
@@ -326,5 +402,179 @@
         (try! (as-contract (stx-transfer? amount tx-sender CONTRACT-OWNER)))
         (map-set orphanage-balances orphanage-id (- current-balance amount))
         (ok true)
+    )
+)
+
+;; Donor Recognition System Public Functions
+(define-public (initialize-badge-system)
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+        ;; Bronze Badge - 1000 STX minimum
+        (map-set badge-definitions "bronze" {
+            min-donation: u1000000,
+            badge-name: "Bronze Supporter",
+            description: "Donated 1000+ STX to orphanages",
+            reward-multiplier: u110,
+        })
+        ;; Silver Badge - 5000 STX minimum
+        (map-set badge-definitions "silver" {
+            min-donation: u5000000,
+            badge-name: "Silver Guardian",
+            description: "Donated 5000+ STX to orphanages",
+            reward-multiplier: u125,
+        })
+        ;; Gold Badge - 10000 STX minimum
+        (map-set badge-definitions "gold" {
+            min-donation: u10000000,
+            badge-name: "Gold Champion",
+            description: "Donated 10000+ STX to orphanages",
+            reward-multiplier: u150,
+        })
+        ;; Platinum Badge - 25000 STX minimum
+        (map-set badge-definitions "platinum" {
+            min-donation: u25000000,
+            badge-name: "Platinum Hero",
+            description: "Donated 25000+ STX to orphanages",
+            reward-multiplier: u200,
+        })
+        (ok true)
+    )
+)
+
+(define-public (check-and-award-badges (donor principal))
+    (let (
+            (total-donated (get-donor-total donor))
+            (current-stats (map-get? donor-recognition-stats donor))
+            (current-block burn-block-height)
+            (badge-id (var-get next-badge-id))
+        )
+        (begin
+            ;; Check for Platinum badge (highest tier)
+            (if (>= total-donated u25000000)
+                (if (unwrap-panic (award-badge-if-new donor "platinum" badge-id current-block u4))
+                    (var-set next-badge-id (+ badge-id u1))
+                    true
+                )
+                ;; Check for Gold badge
+                (if (>= total-donated u10000000)
+                    (if (unwrap-panic (award-badge-if-new donor "gold" badge-id current-block u3))
+                        (var-set next-badge-id (+ badge-id u1))
+                        true
+                    )
+                    ;; Check for Silver badge
+                    (if (>= total-donated u5000000)
+                        (if (unwrap-panic (award-badge-if-new donor "silver" badge-id current-block u2))
+                            (var-set next-badge-id (+ badge-id u1))
+                            true
+                        )
+                        ;; Check for Bronze badge
+                        (if (>= total-donated u1000000)
+                            (if (unwrap-panic (award-badge-if-new donor "bronze" badge-id current-block u1))
+                                (var-set next-badge-id (+ badge-id u1))
+                                true
+                            )
+                            true
+                        )
+                    )
+                )
+            )
+            (unwrap-panic (update-recognition-stats donor))
+            (ok true)
+        )
+    )
+)
+
+(define-private (award-badge-if-new
+        (donor principal)
+        (badge-type (string-ascii 32))
+        (badge-id uint)
+        (current-block uint)
+        (tier uint)
+    )
+    (let ((existing-badge (get-donor-badge donor badge-type)))
+        (if (is-none existing-badge)
+            (begin
+                (map-set donor-badges {
+                    donor: donor,
+                    badge-type: badge-type,
+                } {
+                    badge-id: badge-id,
+                    earned-at: current-block,
+                    claimed: false,
+                    badge-value: tier,
+                })
+                (ok true)
+            )
+            (ok false)
+        )
+    )
+)
+
+(define-private (update-recognition-stats (donor principal))
+    (let (
+            (total-donated (get-donor-total donor))
+            (current-stats (map-get? donor-recognition-stats donor))
+            (recognition-score (calculate-recognition-score donor))
+            (badge-count (count-donor-badges donor))
+            (highest-tier (get-highest-badge-tier donor))
+            (is-vip (>= total-donated u25000000))
+        )
+        (map-set donor-recognition-stats donor {
+            total-badges: badge-count,
+            highest-badge-tier: highest-tier,
+            recognition-score: recognition-score,
+            vip-status: is-vip,
+        })
+        (ok true)
+    )
+)
+
+(define-private (count-donor-badges (donor principal))
+    (let (
+            (bronze (get-donor-badge donor "bronze"))
+            (silver (get-donor-badge donor "silver"))
+            (gold (get-donor-badge donor "gold"))
+            (platinum (get-donor-badge donor "platinum"))
+        )
+        (+ (if (is-some bronze) u1 u0)
+           (if (is-some silver) u1 u0)
+           (if (is-some gold) u1 u0)
+           (if (is-some platinum) u1 u0))
+    )
+)
+
+(define-private (get-highest-badge-tier (donor principal))
+    (let (
+            (bronze (get-donor-badge donor "bronze"))
+            (silver (get-donor-badge donor "silver"))
+            (gold (get-donor-badge donor "gold"))
+            (platinum (get-donor-badge donor "platinum"))
+        )
+        (if (is-some platinum) u4
+            (if (is-some gold) u3
+                (if (is-some silver) u2
+                    (if (is-some bronze) u1 u0))))
+    )
+)
+
+(define-public (claim-badge-benefits
+        (badge-type (string-ascii 32))
+    )
+    (let (
+            (badge (unwrap! (get-donor-badge tx-sender badge-type) ERR-BADGE-NOT-EARNED))
+            (badge-def (unwrap! (get-badge-definition badge-type) ERR-BADGE-NOT-EARNED))
+        )
+        (asserts! (not (get claimed badge)) ERR-BADGE-ALREADY-CLAIMED)
+        (map-set donor-badges {
+            donor: tx-sender,
+            badge-type: badge-type,
+        }
+            (merge badge { claimed: true })
+        )
+        (ok {
+            badge-name: (get badge-name badge-def),
+            reward-multiplier: (get reward-multiplier badge-def),
+            badge-tier: (get badge-value badge),
+        })
     )
 )
