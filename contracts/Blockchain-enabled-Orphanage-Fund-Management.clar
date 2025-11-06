@@ -156,16 +156,15 @@
             (meta (map-get? donation-receipts receipt-id))
         )
         (match owner
-            owner-p
-                (match meta
-                    m (some {
-                        owner: owner-p,
-                        orphanage-id: (get orphanage-id m),
-                        amount: (get amount m),
-                        timestamp: (get timestamp m),
-                    })
-                    none
-                )
+            owner-p (match meta
+                m (some {
+                    owner: owner-p,
+                    orphanage-id: (get orphanage-id m),
+                    amount: (get amount m),
+                    timestamp: (get timestamp m),
+                })
+                none
+            )
             none
         )
     )
@@ -221,8 +220,7 @@
             (stats (map-get? donor-recognition-stats donor))
         )
         (match stats
-            recognition-data (+ (get recognition-score recognition-data) 
-                               (* total-donated u10))
+            recognition-data (+ (get recognition-score recognition-data) (* total-donated u10))
             (* total-donated u10)
         )
     )
@@ -495,25 +493,33 @@
         (begin
             ;; Check for Platinum badge (highest tier)
             (if (>= total-donated u25000000)
-                (if (unwrap-panic (award-badge-if-new donor "platinum" badge-id current-block u4))
+                (if (unwrap-panic (award-badge-if-new donor "platinum" badge-id current-block
+                        u4
+                    ))
                     (var-set next-badge-id (+ badge-id u1))
                     true
                 )
                 ;; Check for Gold badge
                 (if (>= total-donated u10000000)
-                    (if (unwrap-panic (award-badge-if-new donor "gold" badge-id current-block u3))
+                    (if (unwrap-panic (award-badge-if-new donor "gold" badge-id current-block
+                            u3
+                        ))
                         (var-set next-badge-id (+ badge-id u1))
                         true
                     )
                     ;; Check for Silver badge
                     (if (>= total-donated u5000000)
-                        (if (unwrap-panic (award-badge-if-new donor "silver" badge-id current-block u2))
+                        (if (unwrap-panic (award-badge-if-new donor "silver" badge-id
+                                current-block u2
+                            ))
                             (var-set next-badge-id (+ badge-id u1))
                             true
                         )
                         ;; Check for Bronze badge
                         (if (>= total-donated u1000000)
-                            (if (unwrap-panic (award-badge-if-new donor "bronze" badge-id current-block u1))
+                            (if (unwrap-panic (award-badge-if-new donor "bronze" badge-id
+                                    current-block u1
+                                ))
                                 (var-set next-badge-id (+ badge-id u1))
                                 true
                             )
@@ -580,10 +586,22 @@
             (gold (get-donor-badge donor "gold"))
             (platinum (get-donor-badge donor "platinum"))
         )
-        (+ (if (is-some bronze) u1 u0)
-           (if (is-some silver) u1 u0)
-           (if (is-some gold) u1 u0)
-           (if (is-some platinum) u1 u0))
+        (+ (if (is-some bronze)
+            u1
+            u0
+        )
+            (if (is-some silver)
+                u1
+                u0
+            )
+            (if (is-some gold)
+                u1
+                u0
+            )
+            (if (is-some platinum)
+                u1
+                u0
+            ))
     )
 )
 
@@ -594,16 +612,23 @@
             (gold (get-donor-badge donor "gold"))
             (platinum (get-donor-badge donor "platinum"))
         )
-        (if (is-some platinum) u4
-            (if (is-some gold) u3
-                (if (is-some silver) u2
-                    (if (is-some bronze) u1 u0))))
+        (if (is-some platinum)
+            u4
+            (if (is-some gold)
+                u3
+                (if (is-some silver)
+                    u2
+                    (if (is-some bronze)
+                        u1
+                        u0
+                    )
+                )
+            )
+        )
     )
 )
 
-(define-public (claim-badge-benefits
-        (badge-type (string-ascii 32))
-    )
+(define-public (claim-badge-benefits (badge-type (string-ascii 32)))
     (let (
             (badge (unwrap! (get-donor-badge tx-sender badge-type) ERR-BADGE-NOT-EARNED))
             (badge-def (unwrap! (get-badge-definition badge-type) ERR-BADGE-NOT-EARNED))
