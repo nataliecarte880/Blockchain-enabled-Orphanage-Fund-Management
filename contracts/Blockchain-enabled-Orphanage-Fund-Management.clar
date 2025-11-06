@@ -16,6 +16,19 @@
 (define-data-var next-proposal-id uint u1)
 (define-data-var total-donations uint u0)
 (define-data-var next-badge-id uint u1)
+(define-data-var next-receipt-id uint u1)
+
+(define-non-fungible-token donation-receipt uint)
+
+(define-map donation-receipts
+    uint
+    {
+        donor: principal,
+        orphanage-id: uint,
+        amount: uint,
+        timestamp: uint,
+    }
+)
 
 (define-map orphanages
     uint
@@ -137,6 +150,27 @@
     (var-get total-donations)
 )
 
+(define-read-only (get-receipt (receipt-id uint))
+    (let (
+            (owner (nft-get-owner? donation-receipt receipt-id))
+            (meta (map-get? donation-receipts receipt-id))
+        )
+        (match owner
+            owner-p
+                (match meta
+                    m (some {
+                        owner: owner-p,
+                        orphanage-id: (get orphanage-id m),
+                        amount: (get amount m),
+                        timestamp: (get timestamp m),
+                    })
+                    none
+                )
+            none
+        )
+    )
+)
+
 (define-read-only (get-proposal (proposal-id uint))
     (map-get? funding-proposals proposal-id)
 )
@@ -253,6 +287,16 @@
             (merge orphanage { total-received: (+ (get total-received orphanage) amount) })
         )
         (var-set total-donations (+ (var-get total-donations) amount))
+        (let ((rid (var-get next-receipt-id)))
+            (try! (nft-mint? donation-receipt rid tx-sender))
+            (map-set donation-receipts rid {
+                donor: tx-sender,
+                orphanage-id: orphanage-id,
+                amount: amount,
+                timestamp: current-block,
+            })
+            (var-set next-receipt-id (+ rid u1))
+        )
         (ok true)
     )
 )
